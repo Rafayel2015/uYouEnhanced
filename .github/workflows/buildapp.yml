@@ -11,7 +11,7 @@ on:
 
       uyou_version:
         description: "uYou Version"
-        default: "3.0.4"
+        default: "3.0.5"
         required: true
         type: string
 
@@ -53,14 +53,14 @@ on:
 
       ytuhd:
         description: "Include YTUHD"
-        default: true
-        required: true
+        default: false
+        required: false
         type: boolean
 
       sponsorblock:
         description: "Include iSponsorBlock"
-        default: true
-        required: true
+        default: false
+        required: false
         type: boolean
 
 concurrency:
