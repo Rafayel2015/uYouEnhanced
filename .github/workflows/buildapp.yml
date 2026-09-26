@@ -1,3 +1,4 @@
+ url=https://github.com/Rafayel2015/uYouEnhanced/blob/main/.github/workflows/buildapp.yml
 # Original idea by @ISnackable. Thanks to him for handling the hardest parts!
 # https://github.com/ISnackable/YTCubePlus/blob/main/.github/workflows/Build.yml
 
@@ -38,23 +39,23 @@ on:
         type: string
       upload_artifact:
         description: "Upload IPA as artifact"
-        default: false
-        required: false
+        default: true
+        required: true
         type: boolean
       create_release:
         description: "Create a draft release"
         default: true
-        required: false
+        required: true
         type: boolean
       ytuhd:
         description: "Include YTUHD"
-        default: false
-        required: false
+        default: true
+        required: true
         type: boolean
       sponsorblock:
         description: "Include iSponsorBlock"
-        default: false
-        required: false
+        default: true
+        required: true
         type: boolean
 
 concurrency:
@@ -146,11 +147,13 @@ jobs:
       - name: Hash YT ipa url
         run: |
           URL_YT="$(jq -r '.inputs.decrypted_youtube_url' $GITHUB_EVENT_PATH)"
-          echo ::add-mask::$URL_YT
+          echo "::add-mask::$URL_YT"
           echo URL_YT=$URL_YT >> $GITHUB_ENV
 
       - name: Prepare YouTube iPA
         id: prepare_youtube
+        env:
+          YOUTUBE_URL: ${{ github.event.inputs.decrypted_youtube_url }}
         run: |
           wget "$YOUTUBE_URL" --quiet -O main/YouTube.ipa
           cd main
@@ -160,11 +163,11 @@ jobs:
           echo "YT_VERSION=$youtube_version" >> $GITHUB_ENV
           echo "youtube_version=${youtube_version}" >> $GITHUB_OUTPUT
 
-        env:
-          YOUTUBE_URL: ${{ env.URL_YT }}
-
       - name: Fix compiling & Build Package
         id: build_package
+        env:
+          THEOS: ${{ github.workspace }}/theos
+          UYOU_VERSION: ${{ inputs.uyou_version }}
         run: |
           cd main
           sed -i '' "s/^BUNDLE_ID .*/BUNDLE_ID = ${{ inputs.bundle_id }}/" Makefile || echo "BUNDLE_ID = ${{ inputs.bundle_id }}" >> Makefile
@@ -172,10 +175,6 @@ jobs:
           sed -i '' "s/^export TARGET .*/export TARGET = iphone:clang:${{ inputs.sdk_version }}:16.0/" Makefile || echo "export TARGET = iphone:clang:${{ inputs.sdk_version }}:16.0" >> Makefile
           make package THEOS_PACKAGE_SCHEME=rootless IPA=Payload/YouTube.app FINALPACKAGE=1 YTUHD_ENABLED=${{ inputs.ytuhd && '1' || '0' }} SPONSORBLOCK_ENABLED=${{ inputs.sponsorblock && '1' || '0' }}
           echo "package=$(ls -t packages | head -n1)" >> $GITHUB_OUTPUT
-
-        env:
-          THEOS: ${{ github.workspace }}/theos
-          UYOU_VERSION: ${{ inputs.uyou_version }}
 
       - name: Clone Open in YouTube (Safari Extension)
         run: |
@@ -224,7 +223,7 @@ jobs:
             if [ -d "$appex" ]; then
               PLIST="$appex/Info.plist"
               update_plist_id "$PLIST"
-              find "$appex" -type f -name "*.plist" -o -name "*.entitlements" | while read -r f; do
+              find "$appex" -type f \( -name "*.plist" -o -name "*.entitlements" \) | while read -r f; do
                 /usr/bin/plutil -convert xml1 "$f" >/dev/null 2>&1 || true
                 if grep -q "$ORIG_PREFIX" "$f" >/dev/null 2>&1; then
                   echo "Replacing occurrences in $f"
@@ -264,7 +263,7 @@ jobs:
 
           MAIN_APP_DIR="main/Payload/YouTube.app"
           if [ -d "$MAIN_APP_DIR" ]; then
-            find "$MAIN_APP_DIR" -type f -name "*.plist" -o -name "*.entitlements" | while read -r f; do
+            find "$MAIN_APP_DIR" -type f \( -name "*.plist" -o -name "*.entitlements" \) | while read -r f; do
               /usr/bin/plutil -convert xml1 "$f" >/dev/null 2>&1 || true
               if grep -q "$ORIG_PREFIX" "$f" >/dev/null 2>&1; then
                 echo "Replacing occurrences in $f"
@@ -362,7 +361,7 @@ jobs:
           echo "RENAMED_IPA=$NEW" >> "$GITHUB_ENV"
 
       - name: Upload Artifact
-        if: ${{ inputs.upload_artifact }}
+        if: inputs.upload_artifact
         uses: actions/upload-artifact@v7
         env:
           UYOU_VERSION: ${{ inputs.uyou_version }}
@@ -373,7 +372,7 @@ jobs:
           if-no-files-found: error
 
       - name: Create Release
-        if: ${{ inputs.create_release }}
+        if: inputs.create_release
         id: create_release
         uses: softprops/action-gh-release@v3
         env:
