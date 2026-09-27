@@ -6,11 +6,6 @@ name: Build and Release uYouEnhanced
 on:
   workflow_dispatch:
     inputs:
-      build_ffmpeg:
-        description: "Build FFmpegKit from source (+ cached)"
-        default: true
-        required: false
-        type: boolean
       sdk_version:
         description: "iOS SDK Version"
         default: "18.6"
