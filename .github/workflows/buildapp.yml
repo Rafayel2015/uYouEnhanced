@@ -13,12 +13,12 @@ on:
         type: boolean
       sdk_version:
         description: "iOS SDK Version"
-        default: "26.5"
+        default: "18.6"
         required: true
         type: string
       uyou_version:
         description: "uYou Version"
-        default: "3.0.4"
+        default: "3.0.5"
         required: true
         type: string
       decrypted_youtube_url:
