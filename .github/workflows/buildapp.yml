@@ -1,62 +1,61 @@
+# Original idea by @ISnackable. Thanks to him for handling the hardest parts!
+# https://github.com/ISnackable/YTCubePlus/blob/main/.github/workflows/Build.yml
+
 name: Build and Release uYouEnhanced
 
 on:
   workflow_dispatch:
     inputs:
+      build_ffmpeg:
+        description: "Build FFmpegKit from source (+ cached)"
+        default: true
+        required: false
+        type: boolean
       sdk_version:
         description: "iOS SDK Version"
-        default: "18.6"
+        default: "26.5"
         required: true
         type: string
-
       uyou_version:
         description: "uYou Version"
-        default: "3.0.5"
+        default: "3.0.4"
         required: true
         type: string
-
       decrypted_youtube_url:
         description: "Direct URL of the decrypted YouTube IPA"
         default: ""
         required: true
         type: string
-
       bundle_id:
         description: "Modify the bundle ID"
         default: "com.google.ios.youtube"
         required: true
         type: string
-
       app_name:
         description: "Modify the app name"
         default: "YouTube"
         required: true
         type: string
-
       commit_id:
         description: "(Optional) Commit ID to build at"
         default: ""
         required: false
         type: string
-
       upload_artifact:
         description: "Upload IPA as artifact"
-        default: true
-        required: true
+        default: false
+        required: false
         type: boolean
-
       create_release:
         description: "Create a draft release"
         default: true
-        required: true
+        required: false
         type: boolean
-
       ytuhd:
         description: "Include YTUHD"
         default: false
         required: false
         type: boolean
-
       sponsorblock:
         description: "Include iSponsorBlock"
         default: false
@@ -71,83 +70,22 @@ jobs:
   build:
     name: Build uYouEnhanced
     runs-on: macos-latest
-
     permissions:
       contents: write
-
-    env:
-      THEOS: ${{ github.workspace }}/theos
-      SDK_VERSION: ${{ github.event.inputs.sdk_version }}
-      UYOU_VERSION: ${{ github.event.inputs.uyou_version }}
-      BUNDLE_ID: ${{ github.event.inputs.bundle_id }}
-      APP_NAME: ${{ github.event.inputs.app_name }}
-      INPUT_YTUHD: ${{ github.event.inputs.ytuhd }}
-      INPUT_SPONSORBLOCK: ${{ github.event.inputs.sponsorblock }}
-      RENAMED_IPA: ""
 
     steps:
       - name: Checkout Main
         uses: actions/checkout@v7
         with:
           path: main
-          ref: ${{ github.event.inputs.commit_id != '' && github.event.inputs.commit_id || github.ref }}
+          ref: ${{ github.event.inputs.commit_id || github.ref }}
           submodules: recursive
 
       - name: Install Dependencies
         run: |
-          set -euo pipefail
-
-          brew update
-
-          brew install \
-            ldid \
-            dpkg \
-            make \
-            wget \
-            unzip \
-            jq \
-            pipx \
-            pkg-config \
-            libvpx \
-            dav1d
-
-          if [ -d "$(brew --prefix make)/libexec/gnubin" ]; then
-            echo "$(brew --prefix make)/libexec/gnubin" >> "$GITHUB_PATH"
-          fi
-
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-
-          echo "Homebrew prefix: $(brew --prefix)"
-          echo "libvpx prefix: $(brew --prefix libvpx)"
-          echo "dav1d prefix: $(brew --prefix dav1d)"
-
-          test -f "$(brew --prefix libvpx)/include/vpx/vpx_decoder.h"
-          test -f "$(brew --prefix dav1d)/include/dav1d/dav1d.h"
-
-      - name: Configure Codec Paths
-        run: |
-          set -euo pipefail
-
-          BREW_PREFIX="$(brew --prefix)"
-          LIBVPX_PREFIX="$(brew --prefix libvpx)"
-          DAV1D_PREFIX="$(brew --prefix dav1d)"
-
-          {
-            echo "BREW_PREFIX=$BREW_PREFIX"
-            echo "LIBVPX_PREFIX=$LIBVPX_PREFIX"
-            echo "DAV1D_PREFIX=$DAV1D_PREFIX"
-
-            echo "CPATH=$LIBVPX_PREFIX/include:$DAV1D_PREFIX/include:$BREW_PREFIX/include"
-            echo "C_INCLUDE_PATH=$LIBVPX_PREFIX/include:$DAV1D_PREFIX/include:$BREW_PREFIX/include"
-            echo "CPLUS_INCLUDE_PATH=$LIBVPX_PREFIX/include:$DAV1D_PREFIX/include:$BREW_PREFIX/include"
-            echo "LIBRARY_PATH=$LIBVPX_PREFIX/lib:$DAV1D_PREFIX/lib:$BREW_PREFIX/lib"
-            echo "PKG_CONFIG_PATH=$LIBVPX_PREFIX/lib/pkgconfig:$DAV1D_PREFIX/lib/pkgconfig:$BREW_PREFIX/lib/pkgconfig"
-          } >> "$GITHUB_ENV"
-
-          {
-            echo "$LIBVPX_PREFIX/lib" >> "$GITHUB_PATH"
-            echo "$DAV1D_PREFIX/lib" >> "$GITHUB_PATH"
-          }
+          brew install ldid dpkg make wget unzip jq pipx meson ninja gnu-sed autoconf automake libtool pkgconf
+      - name: Set PATH
+        run: echo "$(brew --prefix make)/libexec/gnubin" >> $GITHUB_PATH
 
       - name: Setup Theos
         uses: actions/checkout@v7
@@ -158,36 +96,22 @@ jobs:
           submodules: recursive
 
       - name: SDK Caching
-        id: sdk
+        id: SDK
         uses: actions/cache@v6
         with:
           path: theos/sdks/
-          key: iOS-${{ github.event.inputs.sdk_version }}-SDK
+          key: iOS-${{ inputs.sdk_version }}-SDK
 
       - name: Download iOS SDK
-        if: steps.sdk.outputs.cache-hit != 'true'
+        if: steps.SDK.outputs.cache-hit != 'true'
+        run: |
+          git clone --quiet -n --depth=1 --filter=tree:0 https://github.com/aricloverALT/sdks/ sdks
+          cd sdks
+          git sparse-checkout set --no-cone iPhoneOS${{ inputs.sdk_version }}.sdk
+          git checkout --quiet
+          mv *.sdk $THEOS/sdks
         env:
           THEOS: ${{ github.workspace }}/theos
-          SDK_VERSION: ${{ github.event.inputs.sdk_version }}
-        run: |
-          set -euo pipefail
-
-          git clone \
-            --quiet \
-            -n \
-            --depth=1 \
-            --filter=tree:0 \
-            https://github.com/aricloverALT/sdks/ \
-            sdks
-
-          cd sdks
-          git sparse-checkout set --no-cone "iPhoneOS${SDK_VERSION}.sdk"
-          git checkout --quiet
-
-          mkdir -p "$THEOS/sdks"
-          mv *.sdk "$THEOS/sdks"
-
-          test -d "$THEOS/sdks/iPhoneOS${SDK_VERSION}.sdk"
 
       - name: Setup Theos Jailed
         uses: actions/checkout@v7
@@ -197,521 +121,204 @@ jobs:
           path: theos-jailed
 
       - name: Install Theos Jailed
+        run: ./theos-jailed/install
         env:
           THEOS: ${{ github.workspace }}/theos
+
+      - name: Fix Theos broken pipe issue
         run: |
-          set -euo pipefail
-          ./theos-jailed/install
-
-      - name: Fix Theos Broken Pipe Issue
-        run: |
-          set -euo pipefail
-
-          find "$THEOS" -name "*.sh" -type f -print0 |
-            while IFS= read -r -d '' script; do
-              if grep -q '| head' "$script" 2>/dev/null; then
-                sed -i '' 's/| head/2>\/dev\/null | head/g' "$script" || true
-                echo "Patched: $script"
-              fi
-            done
-
-          find "$THEOS" -name "*.mk" -type f -print0 |
-            while IFS= read -r -d '' makefile; do
-              if grep -q '| head' "$makefile" 2>/dev/null; then
-                sed -i '' 's/| head/2>\/dev\/null | head/g' "$makefile" || true
-                echo "Patched: $makefile"
-              fi
-            done
-
+          find $THEOS -name "*.sh" -type f | while read -r SCRIPT; do
+            if grep -q '| head' "$SCRIPT" 2>/dev/null; then
+              sed -i '' 's/| head/2>\/dev\/null | head/g' "$SCRIPT" 2>/dev/null || true
+              echo "Patched: $SCRIPT"
+            fi
+          done
+          find $THEOS -name "*.mk" -type f | while read -r MK; do
+            if grep -q '| head' "$MK" 2>/dev/null; then
+              sed -i '' 's/| head/2>\/dev\/null | head/g' "$MK" 2>/dev/null || true
+              echo "Patched: $MK"
+            fi
+          done
+          echo "Broken pipe fixes applied"
       - name: Install cyan and tbd
         run: |
-          set -euo pipefail
-
           pipx install https://github.com/asdfzxcvbn/pyzule-rw/archive/main.zip
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-
-          sudo wget \
-            --quiet \
-            "https://github.com/inoahdev/tbd/releases/download/2.2/tbd-mac" \
-            -O /usr/local/bin/tbd
-
-          sudo chmod +x /usr/local/bin/tbd
-
-          command -v cyan
-          command -v tbd
-
-      - name: Hash YouTube IPA URL
+          wget --quiet "https://github.com/inoahdev/tbd/releases/download/2.2/tbd-mac" -O /usr/local/bin/tbd
+          chmod +x /usr/local/bin/tbd
+      - name: Hash YT ipa url
         run: |
-          set -euo pipefail
-
-          URL_YT="$(jq -r '.inputs.decrypted_youtube_url' "$GITHUB_EVENT_PATH")"
-
-          if [ -z "$URL_YT" ] || [ "$URL_YT" = "null" ]; then
-            echo "The decrypted YouTube IPA URL is empty." >&2
-            exit 1
-          fi
-
-          echo "::add-mask::$URL_YT"
-          echo "URL_YT=$URL_YT" >> "$GITHUB_ENV"
-
-      - name: Prepare YouTube IPA
+          URL_YT="$(jq -r '.inputs.decrypted_youtube_url' $GITHUB_EVENT_PATH)"
+          echo ::add-mask::$URL_YT
+          echo URL_YT=$URL_YT >> $GITHUB_ENV
+      - name: Prepare YouTube iPA
         id: prepare_youtube
-        env:
-          YOUTUBE_URL: ${{ github.event.inputs.decrypted_youtube_url }}
         run: |
-          set -euo pipefail
-
-          if [ -z "$YOUTUBE_URL" ]; then
-            echo "YOUTUBE_URL is empty." >&2
-            exit 1
-          fi
-
           wget "$YOUTUBE_URL" --quiet -O main/YouTube.ipa
-
-          test -s main/YouTube.ipa
-
           cd main
-          mv -f YouTube.ipa YouTube.zip
+          mv YouTube.ipa YouTube.zip
           unzip -q YouTube.zip
+          youtube_version=$(defaults read "$(pwd)/Payload/YouTube.app/Info" CFBundleVersion)
+          echo "YT_VERSION=$youtube_version" >> $GITHUB_ENV
+          echo "youtube_version=${youtube_version}" >> $GITHUB_OUTPUT
+        env:
+          YOUTUBE_URL: ${{ env.URL_YT }}
 
-          plist="Payload/YouTube.app/Info.plist"
-          youtube_version=""
+      - name: Restore FFmpegKit cache
+        id: ffmpeg_cache
+        uses: actions/cache/restore@v6
+        with:
+          path: main/modules/ffmpeg
+          key: ffmpegkit-${{ runner.os }}-${{ hashFiles('main/tools/fetch-ffmpegkit.sh') }}
 
-          if [ -f "$plist" ]; then
-            youtube_version=$(
-              /usr/libexec/PlistBuddy \
-                -c "Print :CFBundleVersion" \
-                "$plist" 2>/dev/null || true
-            )
+      - name: Build FFmpegKit from source
+        if: ${{ inputs.build_ffmpeg && steps.ffmpeg_cache.outputs.cache-hit != 'true' }}
+        run: |
+          cd main
+          bash tools/fetch-ffmpegkit.sh
+      - name: Save FFmpegKit cache
+        if: ${{ inputs.build_ffmpeg && steps.ffmpeg_cache.outputs.cache-hit != 'true' && hashFiles('main/modules/ffmpeg') != '' }}
+        uses: actions/cache/save@v6
+        with:
+          path: main/modules/ffmpeg
+          key: ${{ steps.ffmpeg_cache.outputs.cache-primary-key }}
 
-            if [ -z "$youtube_version" ]; then
-              youtube_version=$(
-                /usr/libexec/PlistBuddy \
-                  -c "Print :CFBundleShortVersionString" \
-                  "$plist" 2>/dev/null || true
-              )
-            fi
-          fi
-
-          if [ -z "$youtube_version" ]; then
-            echo "Could not determine YouTube version from $plist" >&2
-            exit 1
-          fi
-
-          echo "YT_VERSION=$youtube_version" >> "$GITHUB_ENV"
-          echo "youtube_version=$youtube_version" >> "$GITHUB_OUTPUT"
-
-      - name: Build Package
+      - name: Fix compiling & Build Package
         id: build_package
+        run: |
+          cd main
+          sed -i '' "s/^BUNDLE_ID .*/BUNDLE_ID = ${{ inputs.bundle_id }}/" Makefile || echo "BUNDLE_ID = ${{ inputs.bundle_id }}" >> Makefile
+          sed -i '' "s/^DISPLAY_NAME .*/DISPLAY_NAME = ${{ inputs.app_name }}/" Makefile || echo "DISPLAY_NAME = ${{ inputs.app_name }}" >> Makefile
+          sed -i '' "s/^export TARGET .*/export TARGET = iphone:clang:${{ inputs.sdk_version }}:15.0/" Makefile || echo "export TARGET = iphone:clang:${{ inputs.sdk_version }}:15.0" >> Makefile
+          make package THEOS_PACKAGE_SCHEME=rootless IPA=Payload/YouTube.app FINALPACKAGE=1 YTUHD_ENABLED=${{ inputs.ytuhd && '1' || '0' }} SPONSORBLOCK_ENABLED=${{ inputs.sponsorblock && '1' || '0' }}
+          echo "package=$(ls -t packages | head -n1)" >> $GITHUB_OUTPUT
         env:
           THEOS: ${{ github.workspace }}/theos
+          UYOU_VERSION: ${{ inputs.uyou_version }}
+
+      - name: Clone Open in YouTube (Safari Extension)
         run: |
-          set -euo pipefail
-
-          cd main
-
-          if [ -f Makefile ]; then
-            sed -i '' "s|^BUNDLE_ID .*|BUNDLE_ID = ${BUNDLE_ID}|" Makefile || true
-            sed -i '' "s|^DISPLAY_NAME .*|DISPLAY_NAME = ${APP_NAME}|" Makefile || true
-            sed -i '' "s|^export TARGET .*|export TARGET = iphone:clang:${SDK_VERSION}:16.0|" Makefile || true
-
-            grep -q "^BUNDLE_ID" Makefile ||
-              echo "BUNDLE_ID = ${BUNDLE_ID}" >> Makefile
-
-            grep -q "^DISPLAY_NAME" Makefile ||
-              echo "DISPLAY_NAME = ${APP_NAME}" >> Makefile
-
-            grep -q "^export TARGET" Makefile ||
-              echo "export TARGET = iphone:clang:${SDK_VERSION}:16.0" >> Makefile
-          else
-            echo "No Makefile found in main/." >&2
-            exit 1
-          fi
-
-          if [ "${INPUT_YTUHD}" = "true" ] || [ "${INPUT_YTUHD}" = "True" ]; then
-            YTUHD_ENABLED=1
-          else
-            YTUHD_ENABLED=0
-          fi
-
-          if [ "${INPUT_SPONSORBLOCK}" = "true" ] || [ "${INPUT_SPONSORBLOCK}" = "True" ]; then
-            SPONSORBLOCK_ENABLED=1
-          else
-            SPONSORBLOCK_ENABLED=0
-          fi
-
-          CODEC_CFLAGS="-I${LIBVPX_PREFIX}/include -I${DAV1D_PREFIX}/include -I${BREW_PREFIX}/include"
-          CODEC_LDFLAGS="-L${LIBVPX_PREFIX}/lib -L${DAV1D_PREFIX}/lib -L${BREW_PREFIX}/lib"
-
-          echo "Codec compiler flags: $CODEC_CFLAGS"
-          echo "Codec linker flags: $CODEC_LDFLAGS"
-
-          make package \
-            THEOS_PACKAGE_SCHEME=rootless \
-            IPA=Payload/YouTube.app \
-            FINALPACKAGE=1 \
-            YTUHD_ENABLED="$YTUHD_ENABLED" \
-            SPONSORBLOCK_ENABLED="$SPONSORBLOCK_ENABLED" \
-            ADDITIONAL_CFLAGS="$CODEC_CFLAGS" \
-            ADDITIONAL_LDFLAGS="$CODEC_LDFLAGS"
-
-          package_file="$(
-            find packages \
-              -maxdepth 1 \
-              -type f \
-              \( -name "*.deb" -o -name "*.ipa" \) \
-              -print |
-              sort |
-              tail -n 1
-          )"
-
-          if [ -z "$package_file" ]; then
-            echo "The build completed without producing a package." >&2
-            find . -maxdepth 3 -type f | sort >&2
-            exit 1
-          fi
-
-          package_file="$(basename "$package_file")"
-          echo "Generated package: $package_file"
-          echo "package=$package_file" >> "$GITHUB_OUTPUT"
-
-      - name: Clone Open in YouTube Safari Extension
-        run: |
-          set -euo pipefail
-
-          git clone \
-            --quiet \
-            -n \
-            --depth=1 \
-            --filter=tree:0 \
-            https://github.com/BillyCurtis/OpenYouTubeSafariExtension.git \
-            OpenYouTubeSafariExtension
-
+          git clone --quiet -n --depth=1 --filter=tree:0 https://github.com/BillyCurtis/OpenYouTubeSafariExtension.git OpenYouTubeSafariExtension
           cd OpenYouTubeSafariExtension
           git sparse-checkout set --no-cone OpenYouTubeSafariExtension.appex
           git checkout --quiet
-
-          cp -R OpenYouTubeSafariExtension.appex ..
-
-      - name: Normalize Extension Bundle IDs
-        run: |
-          set -euo pipefail
-
-          PARENT_BUNDLE="${BUNDLE_ID}"
-          ORIG_PREFIX="com.google.ios.youtube"
-
-          update_plist_id() {
-            local plist_path="$1"
-
-            if [ ! -f "$plist_path" ]; then
-              return 0
-            fi
-
-            /usr/bin/plutil -convert xml1 "$plist_path" >/dev/null 2>&1 || true
-
-            local current_id
-            current_id=$(
-              /usr/libexec/PlistBuddy \
-                -c "Print :CFBundleIdentifier" \
-                "$plist_path" 2>/dev/null || true
-            )
-
-            if [ -z "$current_id" ]; then
-              return 0
-            fi
-
-            if [[ "$current_id" == "$ORIG_PREFIX"* ]]; then
-              local suffix="${current_id#${ORIG_PREFIX}.}"
-              [ "$suffix" = "$current_id" ] && suffix="Extension"
-
-              local new_id="${PARENT_BUNDLE}.${suffix}"
-
-              /usr/libexec/PlistBuddy \
-                -c "Set :CFBundleIdentifier $new_id" \
-                "$plist_path" 2>/dev/null ||
-              /usr/libexec/PlistBuddy \
-                -c "Add :CFBundleIdentifier string $new_id" \
-                "$plist_path" 2>/dev/null || true
-
-              echo "Updated: $current_id -> $new_id"
-            fi
-          }
-
-          for appex in ./*.appex; do
-            if [ -d "$appex" ]; then
-              update_plist_id "$appex/Info.plist"
-
-              find "$appex" \
-                -type f \
-                \( -name "*.plist" -o -name "*.entitlements" \) |
-                while IFS= read -r file; do
-                  /usr/bin/plutil -convert xml1 "$file" >/dev/null 2>&1 || true
-
-                  if grep -q "$ORIG_PREFIX" "$file" 2>/dev/null; then
-                    perl -0777 -pi -e \
-                      "s/\Q${ORIG_PREFIX}\E/${PARENT_BUNDLE}/g" \
-                      "$file"
-                  fi
-                done
-            fi
-          done
-
-          APP_BUNDLE_DIR="main/Payload/YouTube.app"
-          APP_EXTENSIONS_DIR="$APP_BUNDLE_DIR/Extensions"
-
-          if [ -d "$APP_EXTENSIONS_DIR" ]; then
-            rm -rf "$APP_EXTENSIONS_DIR"
-          fi
-
-          find "$APP_BUNDLE_DIR" \
-            -depth \
-            -type d \
-            -name "*AppMigration*" \
-            -print0 2>/dev/null |
-            xargs -0 -I{} rm -rf "{}" || true
-
-          if [ -d "$APP_BUNDLE_DIR" ]; then
-            find "$APP_BUNDLE_DIR" -type d -name "*.appex" |
-              while IFS= read -r appex; do
-                update_plist_id "$appex/Info.plist"
-
-                find "$appex" \
-                  -type f \
-                  \( -name "*.plist" -o -name "*.entitlements" \) |
-                  while IFS= read -r file; do
-                    /usr/bin/plutil -convert xml1 "$file" >/dev/null 2>&1 || true
-
-                    if grep -q "$ORIG_PREFIX" "$file" 2>/dev/null; then
-                      perl -0777 -pi -e \
-                        "s/\Q${ORIG_PREFIX}\E/${PARENT_BUNDLE}/g" \
-                        "$file"
-                    fi
-                  done
-              done
-
-            find "$APP_BUNDLE_DIR" \
-              -type f \
-              \( -name "*.plist" -o -name "*.entitlements" \) |
-              while IFS= read -r file; do
-                /usr/bin/plutil -convert xml1 "$file" >/dev/null 2>&1 || true
-
-                if grep -q "$ORIG_PREFIX" "$file" 2>/dev/null; then
-                  perl -0777 -pi -e \
-                    "s/\Q${ORIG_PREFIX}\E/${PARENT_BUNDLE}/g" \
-                    "$file"
-                fi
-              done
-          fi
-
+          mv *.appex ..
       - name: Inject Tweaks Into IPA
         run: |
-          set -euo pipefail
-
-          cd main
-
-          PACKAGE_NAME="${{ steps.build_package.outputs.package }}"
-          IPA_IN="packages/$PACKAGE_NAME"
-          OUTNAME="uYouEnhanced_${YT_VERSION}_v${UYOU_VERSION}.ipa"
-
-          if [ ! -f "$IPA_IN" ]; then
-            echo "Input package does not exist: $IPA_IN" >&2
-            find packages -maxdepth 1 -type f -print >&2 || true
-            exit 1
-          fi
-
-          tweaks=""
-
-          if [ -d "../OpenYouTubeSafariExtension.appex" ]; then
-            tweaks="$tweaks ../OpenYouTubeSafariExtension.appex"
-          fi
-
-          for deb in packages/*.deb; do
-            if [ -f "$deb" ]; then
-              tweaks="$tweaks $deb"
-            fi
+          IPA_IN="main/packages/${{ steps.build_package.outputs.package }}"
+          OUTNAME="uYouEnhanced_${{ env.YT_VERSION }}_v${{ inputs.uyou_version }}.ipa"
+          tweaks="OpenYouTubeSafariExtension.appex"
+          for f in main/packages/*.deb; do
+            [ -f "$f" ] && tweaks="$tweaks $f"
           done
-
-          if [ -z "$tweaks" ]; then
-            echo "No tweaks or extensions were found." >&2
-            exit 1
-          fi
-
-          export PATH="$HOME/.local/bin:$PATH"
-
-          cyan \
-            -i "$IPA_IN" \
-            -o "$OUTNAME" \
-            -uwef $tweaks \
-            -n "$APP_NAME" \
-            -b "$BUNDLE_ID"
-
-          if [ ! -s "$OUTNAME" ]; then
-            echo "cyan did not create an IPA: $OUTNAME" >&2
-            exit 1
-          fi
-
-          echo "Created IPA: $OUTNAME"
-
+          cyan -i "$IPA_IN" -o "$OUTNAME" -uwef $tweaks -n "${{ inputs.app_name }}" -b ${{ inputs.bundle_id }}
       - name: Strip Unresignable Extensions From Final IPA
         id: strip_ipa
         run: |
           set -euo pipefail
-
-          cd main
-
-          OUTNAME="uYouEnhanced_${YT_VERSION}_v${UYOU_VERSION}.ipa"
-
+          OUTNAME="uYouEnhanced_${{ env.YT_VERSION }}_v${{ inputs.uyou_version }}.ipa"
           if [ ! -f "$OUTNAME" ]; then
-            OUTNAME="$(
-              find . \
-                -maxdepth 3 \
-                -type f \
-                -name 'uYouEnhanced_*.ipa' \
-                -print \
-                -quit
-            )"
-
-            if [ -n "$OUTNAME" ]; then
-              OUTNAME="$(basename "$OUTNAME")"
-            fi
+            OUTNAME="$(basename "$(find . -maxdepth 3 -name 'uYouEnhanced_*.ipa' -print -quit)")"
           fi
-
-          if [ -z "$OUTNAME" ] || [ ! -f "$OUTNAME" ]; then
-            echo "No final IPA was produced." >&2
-            find . -maxdepth 3 -type f | sort >&2
-            exit 1
-          fi
-
           echo "Final IPA: $OUTNAME"
-
-          unzip -Z1 "$OUTNAME" |
-            grep '\.appex/' |
-            sed 's|^\(.*\.appex\)/.*|\1|' |
-            sort -u |
-            tee appex_list.txt || true
-
+          echo "--- .appex bundles contained in final IPA ---"
+          unzip -Z1 "$OUTNAME" | grep '\.appex/' | sed 's|^\(.*\.appex\)/.*|\1|' | sort -u | tee appex_list.txt || true
           BAD="$(grep -v '/PlugIns/' appex_list.txt || true)"
-
           if [ -n "$BAD" ]; then
             echo "Removing unresignable extensions:"
             printf '%s\n' "$BAD"
-
-            while IFS= read -r directory; do
-              [ -z "$directory" ] && continue
-              zip -q -d "$OUTNAME" "${directory}/*" || true
-            done <<< "$BAD"
+            printf '%s\n' "$BAD" | while IFS= read -r d; do
+              zip -q -d "$OUTNAME" "${d}/*" || true
+            done
           else
-            echo "All extensions are under PlugIns/."
+            echo "All extensions are under PlugIns/ - OK for SideStore."
           fi
-
-          mkdir -p packages
-          cp -f "$OUTNAME" "packages/$OUTNAME"
-
-          find packages \
-            -maxdepth 1 \
-            -type f \
-            -name "*.ipa" \
-            ! -name "$OUTNAME" \
-            -delete
-
-          echo "Final SideStore-compatible IPA: packages/$OUTNAME"
+          SC_INFO_MATCHES="$(unzip -Z1 "$OUTNAME" | grep '/SC_Info/' || true)"
+          if [ -n "$SC_INFO_MATCHES" ]; then
+            echo "Removing files under SC_Info/ - OK for AltStore.:"
+            printf '%s\n' "$SC_INFO_MATCHES"
+            zip -q -d "$OUTNAME" "Payload/*/SC_Info/*" "Payload/*/SC_Info" || true
+          fi
+          mkdir -p main/packages
+          cp -f "$OUTNAME" "main/packages/$OUTNAME"
+          find main/packages -maxdepth 1 -name "*.ipa" ! -name "$OUTNAME" -delete || true
+          echo "Final SideStore-compatible IPA: main/packages/$OUTNAME"
           echo "final_ipa=$OUTNAME" >> "$GITHUB_OUTPUT"
-
       - name: Register Alternate App Icons
         run: |
           set -euo pipefail
-
-          cd main
-
-          IPA="packages/${{ steps.strip_ipa.outputs.final_ipa }}"
-
-          if [ ! -f "$IPA" ]; then
-            echo "IPA not found: $IPA" >&2
+          IPA="main/packages/${{ steps.strip_ipa.outputs.final_ipa }}"
+          rm -rf iconwork && mkdir -p iconwork && cd iconwork
+          unzip -q "../$IPA" "Payload/YouTube.app/Info.plist"
+          PLIST="Payload/YouTube.app/Info.plist"
+          ICON_SRC="../main/Localizations/uYouPlus.bundle/AppIcons"
+          PB=/usr/libexec/PlistBuddy
+          BADICONS=0
+          for f in "$ICON_SRC"/*.png; do
+            SPEC="$(sips -g pixelWidth -g pixelHeight -g hasAlpha "$f" 2>/dev/null | awk '/pixelWidth/{w=$2} /pixelHeight/{h=$2} /hasAlpha/{a=$2} END{print w"x"h" alpha="a}')"
+            case "$SPEC" in
+              "1024x1024 alpha=no"*) ;;
+              *) echo "::warning::$(basename "$f") is $SPEC"; BADICONS=1 ;;
+            esac
+          done
+          if [ "$BADICONS" != 0 ]; then
+            echo "::error::app icons must be 1024x1024 opaque PNGs or iOS rejects them with OSStatus -54"
             exit 1
           fi
-
-          rm -rf iconwork
-          mkdir -p iconwork
-          cd iconwork
-
-          unzip -q "../$IPA" "Payload/YouTube.app/Info.plist"
-
-          PLIST="Payload/YouTube.app/Info.plist"
-          ICON_SRC="../../main/Localizations/uYouPlus.bundle/AppIcons"
-          PB="/usr/libexec/PlistBuddy"
-
-          for root in CFBundleIcons "CFBundleIcons~ipad"; do
-            "$PB" -c "Add :$root dict" "$PLIST" 2>/dev/null || true
-            "$PB" -c "Add :$root:CFBundleAlternateIcons dict" "$PLIST" 2>/dev/null || true
+          # Create intermediate dicts FIRST (PlistBuddy cannot nest-create).
+          for ROOT in CFBundleIcons "CFBundleIcons~ipad"; do
+            $PB -c "Add :$ROOT dict" "$PLIST" 2>/dev/null || true
+            $PB -c "Add :$ROOT:CFBundleAlternateIcons dict" "$PLIST" 2>/dev/null || true
           done
-
-          for file in "$ICON_SRC"/*.png; do
-            [ -f "$file" ] || continue
-
-            name="$(basename "$file" .png)"
-            cp -f "$file" "Payload/YouTube.app/$name.png"
-
-            for root in CFBundleIcons "CFBundleIcons~ipad"; do
-              "$PB" \
-                -c "Add :$root:CFBundleAlternateIcons:$name dict" \
-                "$PLIST" 2>/dev/null || true
-
-              "$PB" \
-                -c "Add :$root:CFBundleAlternateIcons:$name:CFBundleIconFiles array" \
-                "$PLIST" 2>/dev/null || true
-
-              "$PB" \
-                -c "Add :$root:CFBundleAlternateIcons:$name:CFBundleIconFiles:0 string $name" \
-                "$PLIST" 2>/dev/null || true
-
-              "$PB" \
-                -c "Add :$root:CFBundleAlternateIcons:$name:CFBundleIconName string $name" \
-                "$PLIST" 2>/dev/null || true
+          for f in "$ICON_SRC"/*.png; do
+            NAME="$(basename "$f" .png)"
+            cp -f "$f" "Payload/YouTube.app/$NAME.png"
+            cp -f "$f" "Payload/YouTube.app/$NAME@2x.png"
+            cp -f "$f" "Payload/YouTube.app/$NAME@3x.png"
+            for ROOT in CFBundleIcons "CFBundleIcons~ipad"; do
+              $PB -c "Add :$ROOT:CFBundleAlternateIcons:$NAME dict" "$PLIST" 2>/dev/null || true
+              $PB -c "Add :$ROOT:CFBundleAlternateIcons:$NAME:CFBundleIconFiles array" "$PLIST" 2>/dev/null || true
+              $PB -c "Add :$ROOT:CFBundleAlternateIcons:$NAME:CFBundleIconFiles:0 string $NAME" "$PLIST" 2>/dev/null || true
             done
-
-            echo "Registered alternate icon: $name"
+            echo "Registered alternate icon: $NAME"
           done
-
-          zip -q "../$IPA" Payload/YouTube.app/Info.plist Payload/YouTube.app/*.png
-
-          cd ..
-          rm -rf iconwork
-
-      - name: Rebrand IPA Filename
+          $PB -c "Print :CFBundleIcons:CFBundleAlternateIcons" "$PLIST" | head -20
+          zip -q "../$IPA" "$PLIST" Payload/YouTube.app/*.png
+          cd .. && rm -rf iconwork
+          echo "Alternate icons registered into $(basename "$IPA")"
+      - name: Rebrand IPA Filename (3.0.4 -> 3.0.5)
         run: |
           set -euo pipefail
-
           cd main/packages
-
           OLD="${{ steps.strip_ipa.outputs.final_ipa }}"
           NEW="${OLD//3.0.4/3.0.5}"
-
           if [ "$OLD" != "$NEW" ] && [ -f "$OLD" ]; then
             mv "$OLD" "$NEW"
+            echo "Renamed: $OLD -> $NEW"
+          else
+            echo "No 3.0.4 in filename or file missing: $OLD"
           fi
-
-          if [ ! -f "$NEW" ]; then
-            echo "IPA file not found after rebranding: $NEW" >&2
-            exit 1
-          fi
-
           echo "RENAMED_IPA=$NEW" >> "$GITHUB_ENV"
-
       - name: Upload Artifact
-        if: ${{ github.event.inputs.upload_artifact == 'true' }}
+        if: ${{ inputs.upload_artifact }}
         uses: actions/upload-artifact@v7
+        env:
+          UYOU_VERSION: ${{ inputs.uyou_version }}
+          YOUTUBE_VERSION: ${{ steps.prepare_youtube.outputs.youtube_version }}
         with:
-          name: uYouEnhanced_${{ steps.prepare_youtube.outputs.youtube_version }}_${{ env.UYOU_VERSION }}
-          path: ${{ github.workspace }}/main/packages/${{ env.RENAMED_IPA }}
+          name: uYouEnhanced_${{ env.YOUTUBE_VERSION }}_${{ env.UYOU_VERSION }}
+          path: ${{ github.workspace }}/main/packages/${{ env.RENAMED_IPA || steps.strip_ipa.outputs.final_ipa }}
           if-no-files-found: error
 
       - name: Create Release
-        if: ${{ github.event.inputs.create_release == 'true' }}
+        if: ${{ inputs.create_release }}
+        id: create_release
         uses: softprops/action-gh-release@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UYOU_VERSION: ${{ inputs.uyou_version }}
+          YOUTUBE_VERSION: ${{ steps.prepare_youtube.outputs.youtube_version }}
         with:
-          tag_name: v${{ steps.prepare_youtube.outputs.youtube_version }}-${{ github.event.inputs.uyou_version }}-${{ github.run_number }}
-          name: v${{ steps.prepare_youtube.outputs.youtube_version }}-${{ github.event.inputs.uyou_version }}-${{ github.run_number }}
+          tag_name: v${{ env.YOUTUBE_VERSION }}-${{ env.UYOU_VERSION }}-(${{ github.run_number }})
+          name: v${{ env.YOUTUBE_VERSION }}-${{ env.UYOU_VERSION }}-(${{ github.run_number }})
           files: main/packages/*.ipa
           draft: true
