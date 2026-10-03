@@ -238,6 +238,35 @@ jobs:
           find main/packages -maxdepth 1 -name "*.ipa" ! -name "$OUTNAME" -delete || true
           echo "Final SideStore-compatible IPA: main/packages/$OUTNAME"
           echo "final_ipa=$OUTNAME" >> "$GITHUB_OUTPUT"
+      - name: Normalize App Icons to 1024x1024 Opaque
+        run: |
+          set -euo pipefail
+          SRC="main/Localizations/uYouPlus.bundle/AppIcons"
+          DST="main/Localizations/uYouPlus.bundle/AppIcons_normalized"
+          if [ ! -d "$SRC" ]; then
+            echo "No AppIcons dir at $SRC — skipping normalization."
+            exit 0
+          fi
+          rm -rf "$DST"
+          mkdir -p "$DST"
+          echo "=== Original icons ==="
+          ls -la "$SRC" || true
+          shopt -s nullglob
+          for f in "$SRC"/*.png; do
+            name="$(basename "$f")"
+            out="$DST/$name"
+            # 1) Pad to 1024x1024 with white background (aspect preserved)
+            sips -s format png --padToHeightWidth 1024 1024 --padColor FFFFFF "$f" --out "$out" >/dev/null
+            # 2) Remove alpha channel (make opaque)
+            sips -s format png -s hasAlpha no "$out" --out "$out" >/dev/null
+            # 3) Verify
+            dims="$(sips -g pixelWidth -g pixelHeight -g hasAlpha "$out" 2>/dev/null | awk '/pixelWidth/{w=$2} /pixelHeight/{h=$2} /hasAlpha/{a=$2} END{print w"x"h" alpha="a}')"
+            echo "Normalized: $name -> $dims"
+          done
+          rm -rf "$SRC"
+          mv "$DST" "$SRC"
+          echo "=== Final icons ==="
+          ls -la "$SRC" || true
       - name: Register Alternate App Icons
         run: |
           set -euo pipefail
